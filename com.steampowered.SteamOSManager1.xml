@@ -231,6 +231,25 @@
   </interface>
 
   <!--
+      com.steampowered.SteamOSManager1.SessionManagement1
+  -->
+  <interface name="com.steampowered.SteamOSManager1.SessionManagement1">
+
+    <property name="DefaultSessionType" type="u" access="readwrite"/>
+
+    <property name="DefaultDesktopType" type="u" access="readwrite"/>
+
+	<method name="SwitchToSession">
+	  <arg type="u" name="type" direction="in"/>
+	</method>
+
+	<method name="SwitchToGameMode"/>
+
+	<method name="SwitchToDesktopMode"/>
+
+  </interface>
+
+  <!--
       com.steampowered.SteamOSManager1.Storage1
       @short_description: Optional interface for managing storage devices
       and filesystems.

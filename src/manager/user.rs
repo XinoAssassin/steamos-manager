@@ -30,6 +30,7 @@ use crate::power::{
     get_gpu_clocks_range, get_gpu_performance_level, get_gpu_power_profile, get_max_charge_level,
     get_tdp_limit, get_tdp_limit_range,
 };
+use crate::session::{is_session_managed, SessionManager, SessionType};
 use crate::wifi::{
     get_wifi_backend, get_wifi_power_management_state, list_wifi_interfaces, WifiBackend,
 };
@@ -141,6 +142,11 @@ struct HdmiCec1 {
 struct Manager2 {
     proxy: Proxy<'static>,
     channel: Sender<Command>,
+}
+
+struct SessionManagement1 {
+    proxy: Proxy<'static>,
+    manager: SessionManager,
 }
 
 struct Storage1 {
@@ -456,6 +462,74 @@ impl Manager2 {
     }
 }
 
+#[interface(name = "com.steampowered.SteamOSManager1.SessionManagement1")]
+impl SessionManagement1 {
+    #[zbus(property)]
+    async fn default_session_type(&self) -> fdo::Result<u32> {
+        Ok(self
+            .manager
+            .default_session_type()
+            .await
+            .map_err(to_zbus_fdo_error)?
+            .into())
+    }
+
+    #[zbus(property)]
+    async fn set_default_session_type(&mut self, session_type: u32) -> fdo::Result<()> {
+        let session_type = SessionType::try_from(session_type).map_err(to_zbus_fdo_error)?;
+        self.manager
+            .set_default_session_type(session_type)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn default_desktop_type(&self) -> fdo::Result<u32> {
+        Ok(self
+            .manager
+            .default_desktop_type()
+            .await
+            .map_err(to_zbus_fdo_error)?
+            .into())
+    }
+
+    #[zbus(property)]
+    async fn set_default_desktop_type(&mut self, session_type: u32) -> fdo::Result<()> {
+        let session_type = SessionType::try_from(session_type).map_err(to_zbus_fdo_error)?;
+        self.manager
+            .set_default_desktop_type(session_type)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    async fn switch_to_session(&self, session_type: u32) -> fdo::Result<()> {
+        let session_type = SessionType::try_from(session_type).map_err(to_zbus_fdo_error)?;
+        self.manager
+            .switch_to_session(session_type)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    async fn switch_to_game_mode(&self) -> fdo::Result<()> {
+        self.manager
+            .switch_to_session(SessionType::Gamescope)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+
+    async fn switch_to_desktop_mode(&self) -> fdo::Result<()> {
+        let session_type = self
+            .manager
+            .default_desktop_type()
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.manager
+            .switch_to_session(session_type)
+            .await
+            .map_err(to_zbus_fdo_error)
+    }
+}
+
 #[interface(name = "com.steampowered.SteamOSManager1.Storage1")]
 impl Storage1 {
     async fn format_device(
@@ -578,6 +652,7 @@ impl WifiPowerManagement1 {
 
 async fn create_config_interfaces(
     proxy: &Proxy<'static>,
+    session: Connection,
     object_server: &ObjectServer,
     job_manager: &UnboundedSender<JobManagerCommand>,
 ) -> Result<()> {
@@ -595,6 +670,10 @@ async fn create_config_interfaces(
         proxy: proxy.clone(),
         job_manager: job_manager.clone(),
     };
+    let session_magement = SessionManagement1 {
+        proxy: proxy.clone(),
+        manager: SessionManager::new(session.clone()),
+    };
     let update_bios = UpdateBios1 {
         proxy: proxy.clone(),
         job_manager: job_manager.clone(),
@@ -610,6 +689,10 @@ async fn create_config_interfaces(
 
     if config.fan_control.is_some() {
         object_server.at(MANAGER_PATH, fan_control).await?;
+    }
+
+    if is_session_managed().await? {
+        object_server.at(MANAGER_PATH, session_magement).await?;
     }
 
     if config.storage.is_some() {
@@ -692,7 +775,7 @@ pub(crate) async fn create_interfaces(
     let object_server = session.object_server();
     object_server.at(MANAGER_PATH, manager).await?;
 
-    create_config_interfaces(&proxy, object_server, &job_manager).await?;
+    create_config_interfaces(&proxy, session.clone(), object_server, &job_manager).await?;
 
     if device_type().await.unwrap_or_default() == DeviceType::SteamDeck {
         object_server.at(MANAGER_PATH, als).await?;
@@ -759,6 +842,7 @@ mod test {
         BatteryChargeLimitConfig, PlatformConfig, RangeConfig, ResetConfig, ScriptConfig,
         ServiceConfig, StorageConfig,
     };
+    use crate::session::make_managed;
     use crate::systemd::test::{MockManager, MockUnit};
     use crate::{path, power, testing};
 
@@ -826,6 +910,8 @@ mod test {
         let exe_path = path("exe");
         write(&exe_path, "").await?;
         set_permissions(&exe_path, PermissionsExt::from_mode(0o700)).await?;
+
+        make_managed().await?;
 
         fake_model(SteamDeckVariant::Galileo).await?;
         handle
@@ -987,6 +1073,17 @@ mod test {
         assert!(test_interface_matches::<Manager2>(&test.connection)
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn interface_matches_session_management1() {
+        let test = start(all_config()).await.expect("start");
+
+        assert!(
+            test_interface_matches::<SessionManagement1>(&test.connection)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
