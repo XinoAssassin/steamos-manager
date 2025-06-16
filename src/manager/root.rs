@@ -2,6 +2,7 @@
  * Copyright © 2023 Collabora Ltd.
  * Copyright © 2024 Valve Software
  * Copyright © 2024 Igalia S.L.
+ * Copyright © 2025 Harald Sitter <sitter@kde.org>
  *
  * SPDX-License-Identifier: MIT
  */
@@ -32,6 +33,10 @@ use crate::power::{
     GPUPerformanceLevel, GPUPowerProfile, TdpLimitManager,
 };
 use crate::process::{run_script, script_output};
+use crate::session_management::{
+    read_default_desktop_session_type, read_default_session_type, switch_to_session,
+    write_default_desktop_session_type, write_default_session_type,
+};
 use crate::wifi::{
     extract_wifi_trace, generate_wifi_dump, set_wifi_backend, set_wifi_debug_mode,
     set_wifi_power_management_state, WifiBackend, WifiDebugMode, WifiPowerManagement,
@@ -461,6 +466,50 @@ impl SteamOSManager {
         set_platform_profile(&config.platform_profile_name, profile)
             .await
             .map_err(to_zbus_fdo_error)
+    }
+
+    async fn session_switch_to_session(&self, ty: &str) -> fdo::Result<()> {
+        switch_to_session(ty)
+            .await
+            .inspect_err(|message| error!("Error switching to session: {message}"))
+            .map_err(to_zbus_fdo_error)
+    }
+
+    #[zbus(property)]
+    async fn session_default_desktop_session_type(&self) -> fdo::Result<String> {
+        Ok(read_default_desktop_session_type().await)
+    }
+
+    #[zbus(property)]
+    async fn set_session_default_desktop_session_type(
+        &mut self,
+        ty: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        write_default_desktop_session_type(ty)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.session_default_desktop_session_type_changed(&ctx)
+            .await?;
+        Ok(())
+    }
+
+    #[zbus(property)]
+    async fn session_default_session_type(&self) -> fdo::Result<String> {
+        Ok(read_default_session_type().await)
+    }
+
+    #[zbus(property)]
+    async fn set_session_default_session_type(
+        &mut self,
+        ty: &str,
+        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        write_default_session_type(ty)
+            .await
+            .map_err(to_zbus_fdo_error)?;
+        self.session_default_session_type_changed(&ctx).await?;
+        Ok(())
     }
 
     /// A version property.

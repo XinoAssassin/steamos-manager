@@ -35,6 +35,7 @@ pub mod hardware;
 pub mod power;
 pub mod proxy;
 pub mod screenreader;
+pub mod session_management;
 pub mod wifi;
 
 #[cfg(test)]
